@@ -1,1 +1,9 @@
 /example/*
+.venv/
+__pycache__/
+.pytest_cache/
+output/
+output*/
+.env
+.env.*
+!.env.example

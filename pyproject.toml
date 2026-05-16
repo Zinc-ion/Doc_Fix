@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "doc-fix"
+version = "0.1.0"
+description = "WPS/Word .doc declaration document rigid rule checker"
+requires-python = ">=3.10"
+dependencies = [
+    "python-docx>=1.1.2",
+    "lxml>=5.0.0",
+    "click>=8.1.0",
+    "rich>=13.0.0",
+    "pywin32>=306; platform_system == 'Windows'",
+    "openai>=1.0.0",
+    "python-dotenv>=1.0.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0.0"]
+
+[project.scripts]
+doc-fix = "doc_fix.cli.main:main"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
