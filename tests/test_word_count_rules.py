@@ -33,3 +33,24 @@ def test_extracts_full_width_digits() -> None:
 
     assert len(rules) == 1
     assert rules[0].limit == 1500
+
+
+def test_extracts_rule_chapter_path() -> None:
+    snapshot = DocumentSnapshot(
+        source_path="template.docx",
+        paragraphs=(
+            ParagraphBlock(index=0, text="第二部分", heading_level=1, chapter_path="第二部分", is_heading=True),
+            ParagraphBlock(
+                index=1,
+                text="包括项目与所属指南方向的匹配性。限1500字以内。",
+                chapter_path="第二部分 > 一、项目目标",
+            ),
+        ),
+        tables=(),
+        images=(),
+    )
+
+    rules = WordCountRuleExtractor().extract(snapshot)
+
+    assert len(rules) == 1
+    assert rules[0].chapter_path == "第二部分 > 一、项目目标"

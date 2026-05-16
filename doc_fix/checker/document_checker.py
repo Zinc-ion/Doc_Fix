@@ -2,12 +2,20 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 from doc_fix.checker.word_count import count_mixed_words, strip_rule_hint
 from doc_fix.model import CheckIssue, DocumentSnapshot, ImageSpec, TableSpec, WordCountRule
 
 
 TWIPS_TO_EMU = 635
 INVALID_RULE_TITLE_TOKENS = ("年 月 日", "20 年", "年月日")
+
+
+@dataclass(frozen=True)
+class _AnchorMatch:
+    index: int
+    mode: str
 
 
 class DocumentChecker:
@@ -40,10 +48,9 @@ class DocumentChecker:
                 )
             ]
 
-        paragraph_texts = [paragraph.text for paragraph in target.paragraphs]
         for index, rule in enumerate(rules):
-            start = self._find_anchor_index(target, rule)
-            if start is None:
+            match = self._find_anchor(target, rule)
+            if match is None:
                 issues.append(
                     CheckIssue(
                         code="word_count.anchor_missing",
@@ -58,12 +65,21 @@ class DocumentChecker:
                     )
                 )
                 continue
+            start = match.index
             end = self._next_rule_boundary(target, rules, start, index)
-            content = self._section_text(target, start, end, rule)
+            content_start = start + 1 if match.mode == "chapter_path" else start
+            content = self._section_text(
+                target,
+                content_start,
+                end,
+                rule,
+                use_start_offset=match.mode != "chapter_path",
+            )
             actual = count_mixed_words(content)
             anchor = target.paragraphs[start]
             preview = compact_preview(content)
             invalid_title = self._looks_like_invalid_rule_title(rule.section_title)
+            locator_prefix = "按章节路径定位：" if match.mode == "chapter_path" else ""
             if actual > rule.limit:
                 issues.append(
                     CheckIssue(
@@ -82,7 +98,7 @@ class DocumentChecker:
                         paragraph_index=start,
                         nearby_heading=anchor.chapter_path,
                         content_preview=preview,
-                        locator=f"目标文档段落 {start + 1}；统计到段落 {end}",
+                        locator=f"{locator_prefix}目标文档段落 {start + 1}；统计到段落 {end}",
                     )
                 )
         return issues
@@ -392,12 +408,23 @@ class DocumentChecker:
         )
 
     def _find_anchor_index(self, snapshot: DocumentSnapshot, rule: WordCountRule) -> int | None:
+        match = self._find_anchor(snapshot, rule)
+        return match.index if match else None
+
+    def _find_anchor(self, snapshot: DocumentSnapshot, rule: WordCountRule) -> _AnchorMatch | None:
         title = rule.section_title
         for paragraph in snapshot.paragraphs:
             if title and title in paragraph.text:
-                return paragraph.index
+                return _AnchorMatch(paragraph.index, "title")
+        chapter_key = normalize_chapter_path_key(rule.chapter_path)
+        if rule.source == "template" and chapter_key:
+            for paragraph in snapshot.paragraphs:
+                if not (paragraph.is_heading or paragraph.heading_level is not None):
+                    continue
+                if normalize_chapter_path_key(paragraph.chapter_path) == chapter_key:
+                    return _AnchorMatch(paragraph.index, "chapter_path")
         if rule.source == "config" and rule.paragraph_index is not None and rule.paragraph_index < len(snapshot.paragraphs):
-            return rule.paragraph_index
+            return _AnchorMatch(rule.paragraph_index, "config")
         return None
 
     def _next_rule_boundary(
@@ -408,8 +435,9 @@ class DocumentChecker:
         rule_index: int,
     ) -> int:
         later_rule_indexes = [
-            self._find_anchor_index(snapshot, later_rule)
+            match.index if match else None
             for later_rule in rules[rule_index + 1 :]
+            for match in (self._find_anchor(snapshot, later_rule),)
         ]
         candidates = [index for index in later_rule_indexes if index is not None and index > start]
         rule = rules[rule_index]
@@ -428,11 +456,12 @@ class DocumentChecker:
         start: int,
         end: int,
         rule: WordCountRule,
+        use_start_offset: bool = True,
     ) -> str:
         parts: list[str] = []
         for paragraph in snapshot.paragraphs[start:end]:
             text = paragraph.text
-            if paragraph.index == start and rule.start_offset is not None:
+            if use_start_offset and paragraph.index == start and rule.start_offset is not None:
                 text = text[rule.start_offset :]
             parts.append(strip_rule_hint(text))
         return "\n".join(parts)
@@ -480,3 +509,9 @@ def normalize_match_key(chapter_path: str | None, caption: str | None) -> str | 
         return None
     parts = [chapter_path or "", caption]
     return "".join("".join(parts).split())
+
+
+def normalize_chapter_path_key(chapter_path: str | None) -> str | None:
+    if not chapter_path:
+        return None
+    return "".join(chapter_path.split())

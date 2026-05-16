@@ -22,3 +22,4 @@ class WordCountRule:
     paragraph_index: int | None = None
     start_offset: int | None = None
     heading_level: int | None = None
+    chapter_path: str | None = None

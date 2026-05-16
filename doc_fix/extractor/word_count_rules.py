@@ -41,6 +41,7 @@ class WordCountRuleExtractor:
                         paragraph_index=paragraph.index,
                         start_offset=match.end(),
                         heading_level=paragraph.heading_level or (current_heading[1] if current_heading else None),
+                        chapter_path=paragraph.chapter_path,
                     )
                 )
         return tuple(dedupe_rules(rules))
