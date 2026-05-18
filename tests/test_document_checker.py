@@ -1,5 +1,5 @@
 from doc_fix.checker import DocumentChecker
-from doc_fix.model import CountPolicy, DocumentSnapshot, ImageSpec, ParagraphBlock, TableSpec, WordCountRule
+from doc_fix.model import CountPolicy, DocumentSnapshot, FormatRule, ImageSpec, ParagraphBlock, TableSpec, WordCountRule
 
 
 def test_checker_reports_exceeded_word_count() -> None:
@@ -241,3 +241,143 @@ def test_checker_reports_image_detail_mismatches() -> None:
     assert "image.height_mismatch" in codes
     assert "image.wrap_mismatch" in codes
     assert "image.alignment_mismatch" in codes
+
+
+def test_checker_reports_body_paragraph_format_mismatches() -> None:
+    template = DocumentSnapshot(
+        source_path="template.docx",
+        paragraphs=(
+            ParagraphBlock(
+                index=0,
+                text="正文",
+                chapter_path="第一章",
+                font_names=("宋体",),
+                font_sizes_pt=(12.0,),
+                alignment="justify",
+                first_line_indent_twips=480,
+                line_spacing=1.5,
+                space_before_twips=0,
+                space_after_twips=120,
+            ),
+        ),
+        tables=(),
+        images=(),
+    )
+    target = DocumentSnapshot(
+        source_path="target.docx",
+        paragraphs=(
+            ParagraphBlock(
+                index=0,
+                text="正文",
+                chapter_path="第一章",
+                font_names=("黑体",),
+                font_sizes_pt=(10.5,),
+                alignment="left",
+                first_line_indent_twips=0,
+                line_spacing=2.0,
+                space_before_twips=120,
+                space_after_twips=0,
+            ),
+        ),
+        tables=(),
+        images=(),
+    )
+
+    issues = DocumentChecker().check(template, target, ())
+    codes = {issue.code for issue in issues}
+
+    assert "paragraph.font_names_mismatch" in codes
+    assert "paragraph.font_sizes_mismatch" in codes
+    assert "paragraph.alignment_mismatch" in codes
+    assert "paragraph.indent_mismatch" in codes
+    assert "paragraph.line_spacing_mismatch" in codes
+    assert "paragraph.spacing_mismatch" in codes
+    assert all(issue.severity == "warning" for issue in issues if issue.code.startswith("paragraph."))
+
+
+def test_format_rules_can_disable_checks_and_apply_tolerance() -> None:
+    template = DocumentSnapshot(
+        source_path="template.docx",
+        paragraphs=(
+            ParagraphBlock(index=0, text="正文", chapter_path="第一章", font_names=("宋体",), font_sizes_pt=(12.0,)),
+        ),
+        tables=(),
+        images=(),
+    )
+    target = DocumentSnapshot(
+        source_path="target.docx",
+        paragraphs=(
+            ParagraphBlock(index=0, text="正文", chapter_path="第一章", font_names=("黑体",), font_sizes_pt=(12.4,)),
+        ),
+        tables=(),
+        images=(),
+    )
+    format_rules = (
+        FormatRule(
+            scope="body",
+            check_font_names=False,
+            font_size_tolerance_pt=0.5,
+            check_alignment=False,
+            check_indent=False,
+            check_line_spacing=False,
+            check_spacing=False,
+        ),
+    )
+
+    issues = DocumentChecker().check(template, target, (), format_rules=format_rules)
+
+    assert not [issue for issue in issues if issue.code.startswith("paragraph.")]
+
+
+def test_heading_format_compares_only_same_heading_level() -> None:
+    template = DocumentSnapshot(
+        source_path="template.docx",
+        paragraphs=(
+            ParagraphBlock(
+                index=0,
+                text="一、标题",
+                heading_level=2,
+                chapter_path="一、标题",
+                is_heading=True,
+                font_names=("黑体",),
+            ),
+            ParagraphBlock(
+                index=1,
+                text="正文",
+                chapter_path="一、标题",
+                font_names=("宋体",),
+            ),
+        ),
+        tables=(),
+        images=(),
+    )
+    target = DocumentSnapshot(
+        source_path="target.docx",
+        paragraphs=(
+            ParagraphBlock(
+                index=0,
+                text="一、标题",
+                heading_level=2,
+                chapter_path="一、标题",
+                is_heading=True,
+                font_names=("宋体",),
+            ),
+            ParagraphBlock(
+                index=1,
+                text="正文",
+                chapter_path="一、标题",
+                font_names=("宋体",),
+            ),
+        ),
+        tables=(),
+        images=(),
+    )
+
+    paragraph_issues = [
+        issue
+        for issue in DocumentChecker().check(template, target, ())
+        if issue.code.startswith("paragraph.")
+    ]
+
+    assert [issue.code for issue in paragraph_issues] == ["paragraph.font_names_mismatch"]
+    assert paragraph_issues[0].paragraph_index == 0

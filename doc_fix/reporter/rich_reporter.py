@@ -14,6 +14,12 @@ def render_report(report: CheckReport, console: Console | None = None) -> None:
     console.print(f"Doc_Fix check result: {status}")
     console.print(f"Template copy: {report.template_docx_path}")
     console.print(f"Input copy: {report.input_docx_path}")
+    if report.annotated_docx_path:
+        console.print(f"Annotated copy: {report.annotated_docx_path}")
+    if report.annotation_warnings:
+        console.print(f"[yellow]Annotation warnings: {len(report.annotation_warnings)} item(s).[/yellow]")
+    if report.ai_review_findings:
+        console.print(f"[yellow]AI review findings: {len(report.ai_review_findings)} manual item(s).[/yellow]")
 
     if not report.issues:
         console.print("[green]未发现刚性规则问题。[/green]")

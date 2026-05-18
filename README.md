@@ -12,7 +12,7 @@ Doc_Fix 面向实际申报材料中常见的 `.doc` 文件。v1 会先将模板�
 - **表格检查**：检查表格数量、列数、宽度、边框、字体、对齐、行高和是否超页宽。
 - **图片检查**：检查图片数量、所在板块、宽高、对齐、环绕方式和是否超页宽。
 - **报告输出**：输出终端摘要、JSON 详情、按目录章节分组的 Markdown/HTML 人工核对报告。
-- **AI 辅助**：可选调用 DeepSeek 生成摘要和人工处理建议。
+- **AI 辅助**：可选调用 DeepSeek 生成摘要、人工处理建议和收尾复核项。
 
 ## 技术栈
 
@@ -41,7 +41,7 @@ Python 3.10+ / Microsoft Word or Word Converter / python-docx / lxml / click / r
    - 字数检查按“中文字符 + 英文/数字词”统计。
    - 表格检查数量、行列数、列宽、边框、字体、字号、对齐、行高和是否超页宽。
    - 图片检查数量、宽高、环绕方式、段落对齐和是否超页宽。
-   - 检查结论由规则引擎决定，DeepSeek 只做可选解释，不改变通过/失败结果。
+   - 检查结论由规则引擎决定，DeepSeek 只做可选解释和人工复核提示，不改变通过/失败结果。
 
 5. **报告输出**
    - 默认在 `--out-dir` 下生成 `report.json`、`report.md`、`report.html`。
@@ -58,7 +58,7 @@ Python 3.10+ / Microsoft Word or Word Converter / python-docx / lxml / click / r
 | `doc_fix.extractor` | 使用 `python-docx` 和底层 OOXML 提取段落、标题、表格、图片和字数规则 |
 | `doc_fix.checker` | 执行字数、表格、图片刚性检查，生成结构化 issue |
 | `doc_fix.reporter` | 生成 JSON、Markdown、HTML 和终端摘要 |
-| `doc_fix.ai` | 可选调用 DeepSeek 生成报告摘要和人工处理建议 |
+| `doc_fix.ai` | 可选调用 DeepSeek 生成报告摘要、人工处理建议和收尾复核项 |
 | `doc_fix.cli` | 使用 `click` 编排命令行流程 |
 | `doc_fix.model` | 定义不可变数据模型，作为模块之间的数据契约 |
 
@@ -81,6 +81,7 @@ Python 3.10+ / Microsoft Word or Word Converter / python-docx / lxml / click / r
 - `附近标题/表题`：例如“表4 项目目标、成果与考核指标表”。
 - `期望/实际`：展示规则要求和当前检测结果。
 - `内容摘录`：截取附近文本，帮助人工确认定位是否正确。
+- `AI 收尾复核`：可选输出模型识别的边界不确定、模板说明文字、转换排版风险等人工确认项。
 
 如果模板和目标不是同一类文档，程序会尽量给出章节定位，但表格匹配可能退回到“按全局序号兜底匹配”。这类提示表示结果需要人工复核。
 
@@ -105,6 +106,7 @@ python -m doc_fix.cli.main check --template template.doc --input target.doc --ou
 - `report.html`
 - `template.converted.docx`
 - `input.converted.docx`
+- `input.annotated.docx`
 
 如果需要覆盖某个报告路径，可以单独指定：
 
@@ -141,6 +143,12 @@ python -m doc_fix.cli.main check --template template.doc --input target.doc --co
 
 ```powershell
 python -m doc_fix.cli.main check --template template.doc --input target.doc --out-dir output --ai
+```
+
+启用 DeepSeek 收尾复核，输出不影响 PASS/FAIL 的人工确认项：
+
+```powershell
+python -m doc_fix.cli.main check --template template.doc --input target.doc --out-dir output --ai-review
 ```
 
 本地 `.env` 示例见 [.env.example](./.env.example)。真实 API key 只应写入本地 `.env`，不要提交到仓库。

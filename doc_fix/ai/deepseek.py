@@ -4,11 +4,11 @@ from __future__ import annotations
 
 import json
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from doc_fix.model import CheckReport
+from doc_fix.model import AiReviewFinding, CheckReport
 from doc_fix.reporter import report_to_dict
 
 
@@ -22,6 +22,7 @@ class AiAssistance:
 
     summary: str
     suggestions: tuple[str, ...]
+    review_findings: tuple[AiReviewFinding, ...] = field(default_factory=tuple)
 
 
 @dataclass(frozen=True)
@@ -38,7 +39,7 @@ class DeepSeekAssistant:
     def __init__(self, settings: DeepSeekSettings | None = None) -> None:
         self._settings = settings or load_settings()
 
-    def analyze(self, report: CheckReport) -> AiAssistance:
+    def analyze(self, report: CheckReport, include_review: bool = False) -> AiAssistance:
         try:
             from openai import OpenAI  # type: ignore[import-not-found]
         except ImportError as exc:
@@ -56,12 +57,12 @@ class DeepSeekAssistant:
                     "role": "system",
                     "content": (
                         "你是申报书格式检查助手。只根据结构化检查结果生成摘要和人工核对建议。"
-                        "不要改变检查通过/失败结论。必须输出 JSON。"
+                        "如启用 AI 收尾复核，只能提出人工确认项，不要改变检查通过/失败结论。必须输出 JSON。"
                     ),
                 },
                 {
                     "role": "user",
-                    "content": build_prompt(report),
+                    "content": build_prompt(report, include_review=include_review),
                 },
             ],
             temperature=0.2,
@@ -98,7 +99,7 @@ def load_settings(env_path: Path | None = None) -> DeepSeekSettings:
     )
 
 
-def build_prompt(report: CheckReport) -> str:
+def build_prompt(report: CheckReport, include_review: bool = False) -> str:
     data = report_to_dict(report)
     compact = {
         "passed": data["passed"],
@@ -107,14 +108,23 @@ def build_prompt(report: CheckReport) -> str:
         "issue_count": len(data["issues"]),
         "issues": data["issues"][:30],
     }
-    return (
+    base = (
         "请基于下面的 Doc_Fix 结构化检查结果，输出 JSON："
         "{\"summary\":\"...\",\"suggestions\":[\"...\"]}。"
         "summary 用一段话概括，suggestions 给 3-8 条人工核对/修改建议。"
         "每条建议必须尽量引用 issue 中的 chapter_path、caption 或 locator，"
         "不要只说“第几个表格”。不要输出 Markdown，不要改变 passed 结论。\n"
-        + json.dumps(compact, ensure_ascii=False)
     )
+    if include_review:
+        base += (
+            "同时增加 review_findings 数组，用于 AI 收尾复核程序难以稳定判断的边界问题。"
+            "每项格式为 {\"code\":\"boundary_uncertain|likely_template_instruction|table_count_policy_uncertain|conversion_layout_risk|other\","
+            "\"message\":\"...\",\"confidence\":0.0-1.0,\"chapter_path\":\"...\",\"locator\":\"...\","
+            "\"evidence\":\"...\",\"suggested_action\":\"...\"}。"
+            "review_findings 只能作为人工确认项，不得要求修改 passed 或刚性 issue 结论。"
+            "若没有值得人工确认的语义边界问题，返回空数组。\n"
+        )
+    return base + json.dumps(compact, ensure_ascii=False)
 
 
 def parse_assistance(content: str) -> AiAssistance:
@@ -124,7 +134,50 @@ def parse_assistance(content: str) -> AiAssistance:
     if not isinstance(suggestions_raw, list):
         suggestions_raw = []
     suggestions = tuple(str(item).strip() for item in suggestions_raw if str(item).strip())
-    return AiAssistance(summary=summary, suggestions=suggestions)
+    review_findings = tuple(_parse_review_finding(item) for item in _list_items(data.get("review_findings")))
+    return AiAssistance(
+        summary=summary,
+        suggestions=suggestions,
+        review_findings=tuple(item for item in review_findings if item is not None),
+    )
+
+
+def _list_items(value: Any) -> list[Any]:
+    return value if isinstance(value, list) else []
+
+
+def _parse_review_finding(value: Any) -> AiReviewFinding | None:
+    if not isinstance(value, dict):
+        return None
+    code = str(value.get("code") or "ai_review").strip()
+    message = str(value.get("message") or "").strip()
+    if not message:
+        return None
+    confidence = _parse_confidence(value.get("confidence"))
+    return AiReviewFinding(
+        code=code,
+        message=message,
+        confidence=confidence,
+        chapter_path=_optional_text(value.get("chapter_path")),
+        locator=_optional_text(value.get("locator")),
+        evidence=_optional_text(value.get("evidence")),
+        suggested_action=_optional_text(value.get("suggested_action")),
+    )
+
+
+def _parse_confidence(value: Any) -> float | None:
+    if value is None:
+        return None
+    try:
+        confidence = float(value)
+    except (TypeError, ValueError):
+        return None
+    return min(1.0, max(0.0, confidence))
+
+
+def _optional_text(value: Any) -> str | None:
+    text = str(value or "").strip()
+    return text or None
 
 
 def _loads_json_object(content: str) -> dict[str, Any]:

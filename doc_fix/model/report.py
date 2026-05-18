@@ -17,6 +17,7 @@ class CheckIssue:
     source: str | None = None
     chapter_path: str | None = None
     paragraph_index: int | None = None
+    end_paragraph_index: int | None = None
     table_index: int | None = None
     image_index: int | None = None
     nearby_heading: str | None = None
@@ -34,10 +35,26 @@ class CheckReport:
     template_docx_path: str
     input_docx_path: str
     issues: tuple[CheckIssue, ...] = field(default_factory=tuple)
+    annotated_docx_path: str | None = None
+    annotation_warnings: tuple[str, ...] = field(default_factory=tuple)
     ai_summary: str | None = None
     ai_suggestions: tuple[str, ...] = field(default_factory=tuple)
+    ai_review_findings: tuple["AiReviewFinding", ...] = field(default_factory=tuple)
     ai_error: str | None = None
 
     @property
     def passed(self) -> bool:
         return not any(issue.severity == "error" for issue in self.issues)
+
+
+@dataclass(frozen=True)
+class AiReviewFinding:
+    """AI-generated review item that does not affect rigid pass/fail."""
+
+    code: str
+    message: str
+    confidence: float | None = None
+    chapter_path: str | None = None
+    locator: str | None = None
+    evidence: str | None = None
+    suggested_action: str | None = None

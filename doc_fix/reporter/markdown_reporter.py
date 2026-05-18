@@ -17,8 +17,10 @@ def render_markdown_report(report: CheckReport) -> str:
         f"- 目标文件：`{report.input_path}`",
         f"- 模板工作副本：`{report.template_docx_path}`",
         f"- 目标工作副本：`{report.input_docx_path}`",
+        f"- 标注审核副本：`{report.annotated_docx_path or '未生成'}`",
         "",
     ]
+    lines.extend(_render_annotation_warnings(report))
     lines.extend(_render_ai(report))
     lines.extend(_render_issue_summary(report.issues))
     lines.extend(_render_issue_table(report.issues))
@@ -30,6 +32,16 @@ def write_markdown_report(report: CheckReport, output_path: Path) -> None:
     output_path.write_text(render_markdown_report(report), encoding="utf-8")
 
 
+def _render_annotation_warnings(report: CheckReport) -> list[str]:
+    if not report.annotation_warnings:
+        return []
+    lines = ["## 标注状态", ""]
+    for warning in report.annotation_warnings:
+        lines.append(f"- {warning}")
+    lines.append("")
+    return lines
+
+
 def _render_ai(report: CheckReport) -> list[str]:
     lines: list[str] = []
     if report.ai_summary:
@@ -38,6 +50,20 @@ def _render_ai(report: CheckReport) -> list[str]:
         lines.extend(["## AI 处理建议", ""])
         for suggestion in report.ai_suggestions:
             lines.append(f"- {suggestion}")
+        lines.append("")
+    if report.ai_review_findings:
+        lines.extend(["## AI 收尾复核", ""])
+        for finding in report.ai_review_findings:
+            confidence = "" if finding.confidence is None else f"（置信度：{finding.confidence:.2f}）"
+            lines.append(f"- **{finding.code}**{confidence}：{finding.message}")
+            if finding.locator:
+                lines.append(f"  - 怎么找：{finding.locator}")
+            if finding.chapter_path:
+                lines.append(f"  - 章节：{finding.chapter_path}")
+            if finding.evidence:
+                lines.append(f"  - 依据：{_md_cell(finding.evidence)}")
+            if finding.suggested_action:
+                lines.append(f"  - 建议：{finding.suggested_action}")
         lines.append("")
     if report.ai_error:
         lines.extend(["## AI 辅助状态", "", f"> {report.ai_error}", ""])

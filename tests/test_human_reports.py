@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from doc_fix.model import CheckIssue, CheckReport
+from doc_fix.model import AiReviewFinding, CheckIssue, CheckReport
 from doc_fix.reporter import render_html_report, render_markdown_report, write_html_report, write_markdown_report
 
 
@@ -22,6 +22,15 @@ def make_report() -> CheckReport:
         ),
         ai_summary="存在字数超限。",
         ai_suggestions=("压缩项目简介。",),
+        ai_review_findings=(
+            AiReviewFinding(
+                code="boundary_uncertain",
+                message="该段可能是模板说明文字。",
+                confidence=0.7,
+                locator="目标文档段落 59",
+                suggested_action="人工确认是否计入字数",
+            ),
+        ),
     )
 
 
@@ -30,6 +39,8 @@ def test_render_markdown_report_contains_human_sections() -> None:
 
     assert "# Doc_Fix 检查报告" in markdown
     assert "AI 辅助摘要" in markdown
+    assert "AI 收尾复核" in markdown
+    assert "boundary_uncertain" in markdown
     assert "word_count.exceeded" in markdown
     assert "项目简介" in markdown
 

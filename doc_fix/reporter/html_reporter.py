@@ -35,6 +35,7 @@ def render_html_report(report: CheckReport) -> str:
   <h1>Doc_Fix 检查报告</h1>
   <p>检查结论：<span class="status {status_class}">{status}</span></p>
   {_render_paths(report)}
+  {_render_annotation_warnings(report)}
   {_render_ai(report)}
   {_render_summary(report)}
   {_render_issues(report)}
@@ -54,11 +55,19 @@ def _render_paths(report: CheckReport) -> str:
         ("目标文件", report.input_path),
         ("模板工作副本", report.template_docx_path),
         ("目标工作副本", report.input_docx_path),
+        ("标注审核副本", report.annotated_docx_path or "未生成"),
     ]
     return "<div class=\"panel\">" + "".join(
         f"<p><strong>{escape(label)}：</strong><code>{escape(value)}</code></p>"
         for label, value in items
     ) + "</div>"
+
+
+def _render_annotation_warnings(report: CheckReport) -> str:
+    if not report.annotation_warnings:
+        return ""
+    warnings = "".join(f"<li>{escape(item)}</li>" for item in report.annotation_warnings)
+    return f"<h2>标注状态</h2><div class=\"panel\"><ul>{warnings}</ul></div>"
 
 
 def _render_ai(report: CheckReport) -> str:
@@ -68,9 +77,28 @@ def _render_ai(report: CheckReport) -> str:
     if report.ai_suggestions:
         suggestions = "".join(f"<li>{escape(item)}</li>" for item in report.ai_suggestions)
         parts.append(f"<h2>AI 处理建议</h2><div class=\"panel\"><ul>{suggestions}</ul></div>")
+    if report.ai_review_findings:
+        findings = "".join(_render_ai_review_finding(item) for item in report.ai_review_findings)
+        parts.append(f"<h2>AI 收尾复核</h2><div class=\"panel\">{findings}</div>")
     if report.ai_error:
         parts.append(f"<h2>AI 辅助状态</h2><div class=\"panel\"><p>{escape(report.ai_error)}</p></div>")
     return "".join(parts)
+
+
+def _render_ai_review_finding(finding) -> str:
+    confidence = "" if finding.confidence is None else f"（置信度：{finding.confidence:.2f}）"
+    rows = [
+        f"<p><strong>{escape(finding.code)}</strong>{escape(confidence)}：{escape(finding.message)}</p>",
+    ]
+    if finding.locator:
+        rows.append(f"<p><strong>怎么找：</strong>{escape(finding.locator)}</p>")
+    if finding.chapter_path:
+        rows.append(f"<p><strong>章节：</strong>{escape(finding.chapter_path)}</p>")
+    if finding.evidence:
+        rows.append(f"<p><strong>依据：</strong>{escape(finding.evidence)}</p>")
+    if finding.suggested_action:
+        rows.append(f"<p><strong>建议：</strong>{escape(finding.suggested_action)}</p>")
+    return "<div class=\"issue warning\">" + "".join(rows) + "</div>"
 
 
 def _render_summary(report: CheckReport) -> str:

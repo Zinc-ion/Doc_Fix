@@ -13,6 +13,15 @@ class ParagraphBlock:
     heading_level: int | None = None
     chapter_path: str | None = None
     is_heading: bool = False
+    font_names: tuple[str, ...] = ()
+    font_sizes_pt: tuple[float, ...] = ()
+    alignment: str | None = None
+    first_line_indent_twips: int | None = None
+    left_indent_twips: int | None = None
+    right_indent_twips: int | None = None
+    line_spacing: float | None = None
+    space_before_twips: int | None = None
+    space_after_twips: int | None = None
 
 
 @dataclass(frozen=True)

@@ -36,9 +36,21 @@ Doc_Fix 是一个面向 WPS/Word 申报书、标书文档的格式检查工具�
 | 底层 OOXML 访问 | `lxml` |
 | CLI 框架 | `click` |
 | 终端输出 | `rich` |
-| AI 辅助 | DeepSeek OpenAI-compatible API + `openai` + `python-dotenv` |
+| AI 辅助与复核 | DeepSeek OpenAI-compatible API + `openai` + `python-dotenv` |
 | 测试框架 | `pytest` |
 | 包管理 | `pip` + `requirements.txt` |
+
+### 本地虚拟环境
+
+- 本项目在当前 Windows 开发机上使用 conda 环境：`D:\Anaconda3\envs\doc_fix`。
+- 后续运行测试、CLI 或验证命令时，默认使用该环境，不要使用 Anaconda `base` 环境或 Codex bundled Python。
+- 推荐测试命令：
+
+```powershell
+D:\Anaconda3\envs\doc_fix\python.exe -m pytest
+```
+
+- 如需临时检查依赖或运行单个脚本，也应通过 `D:\Anaconda3\envs\doc_fix\python.exe` 执行。
 
 ### 技术约束
 
@@ -47,7 +59,7 @@ Doc_Fix 是一个面向 WPS/Word 申报书、标书文档的格式检查工具�
 - 转换后的 `.docx` 副本必须保留，便于人工复核和后续问题定位。
 - 检查模块只消费标准化后的 `.docx`，不得在业务检查逻辑中混入 Word COM 调用。
 - `.docx -> .doc` 只允许作为后续导出能力，且导出后必须再次检查刚性规则。
-- DeepSeek 仅作为可选辅助摘要和人工建议来源，不得改变刚性规则的 pass/fail 结论。
+- DeepSeek 仅作为可选辅助摘要、人工建议和人工复核项来源，不得改变刚性规则的 pass/fail 结论。
 - API key 必须通过本地 `.env` 或环境变量提供，禁止写入代码、文档示例、测试输出或报告。
 - v1 不引入 Web 框架。
 
