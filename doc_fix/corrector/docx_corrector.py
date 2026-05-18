@@ -13,7 +13,9 @@ from typing import Iterable
 import zipfile
 
 from docx import Document
+from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
+from docx.shared import Pt
 from docx.text.paragraph import Paragraph
 from docx.text.run import Run
 from lxml import etree
@@ -24,6 +26,10 @@ from doc_fix.model import CorrectionAction, CorrectionReport, DocumentSnapshot, 
 BRACKET_REMARK_PATTERN = re.compile(r"【[^】]*】")
 BLACK_COLOR = "000000"
 OOXML_WORD_NAMESPACE = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+TABLE_BODY_SECTION_PREFIXES = ("第一部分", "第二部分", "第三部分", "第四部分", "第五部分")
+TABLE_EAST_ASIA_FONT = "宋体"
+TABLE_LATIN_FONT = "Times New Roman"
+TABLE_FONT_SIZE_PT = 10.5
 DEFAULT_FORMAT_RULES = (
     FormatRule(scope="body"),
     FormatRule(scope="heading"),
@@ -60,11 +66,7 @@ class DocxCorrector:
             input_snapshot,
             rules,
         )
-        table_count, table_warnings = self._apply_table_text_formats(
-            template_document,
-            target_document,
-            rules,
-        )
+        table_count, table_warnings = self._apply_table_text_formats(target_document, input_snapshot, rules)
         removed_count, removed_paragraphs = self._remove_bracket_remarks(target_document)
         warnings.extend(paragraph_warnings)
         warnings.extend(table_warnings)
@@ -155,30 +157,30 @@ class DocxCorrector:
             corrected += 1
         return corrected, warnings
 
-    def _apply_table_text_formats(self, template_document, target_document, rules: dict[str, FormatRule]) -> tuple[int, list[str]]:
+    def _apply_table_text_formats(
+        self,
+        target_document,
+        input_snapshot: DocumentSnapshot,
+        rules: dict[str, FormatRule],
+    ) -> tuple[int, list[str]]:
         body_rule = rules.get("body")
         if body_rule is None or not body_rule.enabled:
             return 0, []
 
         corrected = 0
-        warnings: list[str] = []
+        table_specs = {table.index: table for table in input_snapshot.tables}
         for table_index, target_table in enumerate(target_document.tables):
-            if table_index >= len(template_document.tables):
-                warnings.append(f"table {table_index + 1}: 模板缺少对应表格，跳过表格文字格式修正。")
-                continue
-            template_table = template_document.tables[table_index]
-            fallback = self._first_non_empty_table_paragraph(template_table)
-            if fallback is None:
+            table_spec = table_specs.get(table_index)
+            if table_spec is None or not _is_body_table_to_normalize(table_spec.chapter_path):
                 continue
             for row_index, target_row in enumerate(target_table.rows):
                 for cell_index, target_cell in enumerate(target_row.cells):
-                    reference = self._matching_table_cell_paragraph(template_table, row_index, cell_index) or fallback
                     for paragraph in target_cell.paragraphs:
                         if not paragraph.text.strip():
                             continue
-                        self._copy_paragraph_format(reference, paragraph, body_rule)
+                        _apply_body_table_text_format(paragraph)
                         corrected += 1
-        return corrected, warnings
+        return corrected, []
 
     def _remove_bracket_remarks(self, document) -> tuple[int, int]:
         removed = 0
@@ -347,6 +349,41 @@ def _remove_bracket_remarks_from_paragraph(paragraph: Paragraph) -> int:
         node.text = "".join(char for char, should_keep in zip(value, keep[offset : offset + length], strict=True) if should_keep)
         offset += length
     return len(matches)
+
+
+def _is_body_table_to_normalize(chapter_path: str | None) -> bool:
+    normalized = "".join((chapter_path or "").split())
+    return normalized.startswith(TABLE_BODY_SECTION_PREFIXES)
+
+
+def _apply_body_table_text_format(paragraph: Paragraph) -> None:
+    for run in _text_runs(paragraph):
+        _set_body_table_run_format(run)
+
+
+def _set_body_table_run_format(run: Run) -> None:
+    r_pr = run._r.get_or_add_rPr()
+    _remove_run_property(r_pr, "rFonts")
+    _remove_run_property(r_pr, "sz")
+    _remove_run_property(r_pr, "szCs")
+
+    r_fonts = OxmlElement("w:rFonts")
+    r_fonts.set(qn("w:ascii"), TABLE_LATIN_FONT)
+    r_fonts.set(qn("w:hAnsi"), TABLE_LATIN_FONT)
+    r_fonts.set(qn("w:cs"), TABLE_LATIN_FONT)
+    r_fonts.set(qn("w:eastAsia"), TABLE_EAST_ASIA_FONT)
+    r_pr.append(r_fonts)
+
+    run.font.size = Pt(TABLE_FONT_SIZE_PT)
+    size_cs = OxmlElement("w:szCs")
+    size_cs.set(qn("w:val"), str(int(TABLE_FONT_SIZE_PT * 2)))
+    r_pr.append(size_cs)
+
+
+def _remove_run_property(r_pr, tag: str) -> None:
+    for child in list(r_pr):
+        if child.tag == qn(f"w:{tag}"):
+            r_pr.remove(child)
 
 
 def _normalize_docx_package_black_white(path: Path) -> int:

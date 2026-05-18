@@ -102,7 +102,7 @@ def test_corrector_removes_multi_run_remarks_and_empty_body_paragraphs(tmp_path:
     assert [paragraph.text for paragraph in corrected.paragraphs] == ["保留结束"]
 
 
-def test_corrector_copies_table_text_format_and_keeps_empty_table_paragraph(tmp_path: Path) -> None:
+def test_corrector_keeps_out_of_scope_table_format_and_removes_table_remarks(tmp_path: Path) -> None:
     template_path = tmp_path / "template.docx"
     input_path = tmp_path / "input.docx"
     output_path = tmp_path / "input.corrected.docx"
@@ -121,6 +121,7 @@ def test_corrector_copies_table_text_format_and_keeps_empty_table_paragraph(tmp_
     target_table = target.add_table(rows=1, cols=1)
     target_cell = target_table.cell(0, 0)
     target_cell.text = "目标【表格备注】"
+    target_cell.paragraphs[0].runs[0].font.size = Pt(16)
     target.save(input_path)
 
     extractor = DocxExtractor()
@@ -135,11 +136,70 @@ def test_corrector_copies_table_text_format_and_keeps_empty_table_paragraph(tmp_
     corrected = Document(output_path)
     paragraph = corrected.tables[0].cell(0, 0).paragraphs[0]
     assert paragraph.text == "目标"
-    assert paragraph.alignment == WD_ALIGN_PARAGRAPH.CENTER
-    assert paragraph.runs[0].font.size.pt == 12
-    assert {"table.text_format_aligned", "remarks.bracket_removed", "format.color_normalized"}.issubset(
-        {action.code for action in report.actions}
+    assert paragraph.alignment is None
+    assert paragraph.runs[0].font.size.pt == 16
+    action_codes = {action.code for action in report.actions}
+    assert "remarks.bracket_removed" in action_codes
+    assert "format.color_normalized" in action_codes
+    assert "table.text_format_aligned" not in action_codes
+
+
+def test_corrector_normalizes_first_to_fifth_part_table_text_without_template(tmp_path: Path) -> None:
+    template_path = tmp_path / "template.docx"
+    input_path = tmp_path / "input.docx"
+    output_path = tmp_path / "input.corrected.docx"
+
+    template = Document()
+    template_table = template.add_table(rows=1, cols=1)
+    template_table.cell(0, 0).text = "模板表格"
+    template_table.cell(0, 0).paragraphs[0].runs[0].font.size = Pt(18)
+    template.save(template_path)
+
+    target = Document()
+    cover_table = target.add_table(rows=1, cols=1)
+    cover_table.cell(0, 0).text = "封面表格 English"
+    cover_table.cell(0, 0).paragraphs[0].runs[0].font.size = Pt(16)
+    target.add_paragraph("第一部分  国内外现状及趋势分析")
+    first_table = target.add_table(rows=1, cols=1)
+    first_table.cell(0, 0).text = "第一部分表格 English"
+    first_table.cell(0, 0).paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.RIGHT
+    first_table.cell(0, 0).paragraphs[0].runs[0].font.size = Pt(16)
+    target.add_paragraph("第五部分  项目组织实施、保障措施及风险分析")
+    fifth_table = target.add_table(rows=1, cols=1)
+    fifth_table.cell(0, 0).text = "第五部分表格 English"
+    fifth_table.cell(0, 0).paragraphs[0].runs[0].font.size = Pt(14)
+    target.add_paragraph("第六部分  研究团队")
+    sixth_table = target.add_table(rows=1, cols=1)
+    sixth_table.cell(0, 0).text = "第六部分表格 English"
+    sixth_table.cell(0, 0).paragraphs[0].runs[0].font.size = Pt(15)
+    target.save(input_path)
+
+    extractor = DocxExtractor()
+    report = DocxCorrector().correct(
+        template_path,
+        input_path,
+        output_path,
+        extractor.extract(template_path),
+        extractor.extract(input_path),
     )
+
+    corrected = Document(output_path)
+    cover_run = corrected.tables[0].cell(0, 0).paragraphs[0].runs[0]
+    first_paragraph = corrected.tables[1].cell(0, 0).paragraphs[0]
+    first_run = first_paragraph.runs[0]
+    fifth_run = corrected.tables[2].cell(0, 0).paragraphs[0].runs[0]
+    sixth_run = corrected.tables[3].cell(0, 0).paragraphs[0].runs[0]
+
+    assert cover_run.font.size.pt == 16
+    assert first_run.font.size.pt == 10.5
+    assert fifth_run.font.size.pt == 10.5
+    assert sixth_run.font.size.pt == 15
+    assert first_run._r.rPr.rFonts.get(qn("w:eastAsia")) == "宋体"
+    assert first_run._r.rPr.rFonts.get(qn("w:ascii")) == "Times New Roman"
+    assert fifth_run._r.rPr.rFonts.get(qn("w:eastAsia")) == "宋体"
+    assert fifth_run._r.rPr.rFonts.get(qn("w:ascii")) == "Times New Roman"
+    assert first_paragraph.alignment == WD_ALIGN_PARAGRAPH.RIGHT
+    assert "table.text_format_aligned" in {action.code for action in report.actions}
 
 
 def test_corrector_normalizes_package_xml_highlight_shading_and_colors(tmp_path: Path) -> None:
