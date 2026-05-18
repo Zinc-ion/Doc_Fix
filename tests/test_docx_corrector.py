@@ -1,5 +1,6 @@
 from pathlib import Path
 import zipfile
+import base64
 
 from docx import Document
 from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_COLOR_INDEX
@@ -9,6 +10,11 @@ from docx.shared import Pt, RGBColor
 
 from doc_fix.corrector import DocxCorrector
 from doc_fix.extractor import DocxExtractor
+
+
+TINY_PNG = base64.b64decode(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII="
+)
 
 
 def test_corrector_copies_paragraph_format_and_removes_bracket_remarks(tmp_path: Path) -> None:
@@ -202,6 +208,139 @@ def test_corrector_normalizes_first_to_fifth_part_table_text_without_template(tm
     assert "table.text_format_aligned" in {action.code for action in report.actions}
 
 
+def test_corrector_thins_first_to_fifth_part_table_borders_only(tmp_path: Path) -> None:
+    template_path = tmp_path / "template.docx"
+    input_path = tmp_path / "input.docx"
+    output_path = tmp_path / "input.corrected.docx"
+
+    template = Document()
+    template.add_paragraph("模板")
+    template.save(template_path)
+
+    target = Document()
+    target.add_paragraph("第一部分  国内外现状及趋势分析")
+    first_table = target.add_table(rows=1, cols=1)
+    first_table.cell(0, 0).text = "第一部分表格"
+    _add_table_border(first_table, "24")
+    _add_cell_border(first_table.cell(0, 0), "20")
+    target.add_paragraph("第六部分  研究团队")
+    sixth_table = target.add_table(rows=1, cols=1)
+    sixth_table.cell(0, 0).text = "第六部分表格"
+    _add_table_border(sixth_table, "24")
+    _add_cell_border(sixth_table.cell(0, 0), "20")
+    target.save(input_path)
+
+    extractor = DocxExtractor()
+    report = DocxCorrector().correct(
+        template_path,
+        input_path,
+        output_path,
+        extractor.extract(template_path),
+        extractor.extract(input_path),
+    )
+
+    with zipfile.ZipFile(output_path) as package:
+        document_xml = package.read("word/document.xml").decode("utf-8")
+    assert document_xml.count('w:sz="4"') >= 8
+    assert 'w:sz="24"' in document_xml
+    assert 'w:sz="20"' in document_xml
+    assert "table.border_thinned" in {action.code for action in report.actions}
+
+
+def test_corrector_centers_first_to_fifth_part_images_and_strips_leading_space(tmp_path: Path) -> None:
+    template_path = tmp_path / "template.docx"
+    input_path = tmp_path / "input.docx"
+    output_path = tmp_path / "input.corrected.docx"
+    image_path = tmp_path / "tiny.png"
+    image_path.write_bytes(TINY_PNG)
+
+    template = Document()
+    template.add_paragraph("模板")
+    template.save(template_path)
+
+    target = Document()
+    target.add_paragraph("第一部分  国内外现状及趋势分析")
+    first_image = target.add_paragraph()
+    first_image.add_run("   ")
+    first_image.add_run().add_picture(str(image_path), width=Pt(12))
+    target.add_paragraph("第六部分  研究团队")
+    sixth_image = target.add_paragraph()
+    sixth_image.add_run("   ")
+    sixth_image.add_run().add_picture(str(image_path), width=Pt(12))
+    target.save(input_path)
+
+    extractor = DocxExtractor()
+    report = DocxCorrector().correct(
+        template_path,
+        input_path,
+        output_path,
+        extractor.extract(template_path),
+        extractor.extract(input_path),
+    )
+
+    corrected = Document(output_path)
+    assert corrected.paragraphs[1].alignment == WD_ALIGN_PARAGRAPH.CENTER
+    assert corrected.paragraphs[1].text == ""
+    assert corrected.paragraphs[3].alignment is None
+    assert corrected.paragraphs[3].text == "   "
+    assert "image.centered" in {action.code for action in report.actions}
+
+
+def test_corrector_normalizes_existing_captions_with_seq_fields(tmp_path: Path) -> None:
+    template_path = tmp_path / "template.docx"
+    input_path = tmp_path / "input.docx"
+    output_path = tmp_path / "input.corrected.docx"
+
+    template = Document()
+    template.add_paragraph("模板")
+    template.save(template_path)
+
+    target = Document()
+    target.add_paragraph("第一部分  国内外现状及趋势分析")
+    target.add_paragraph("   图x: 旧图片标题 English")
+    target.add_paragraph("表3.1 国外从事相关研究的主要机构")
+    target.add_paragraph("第二部分  研究目标及内容")
+    try:
+        target.add_paragraph("图 X 第二张图", style="Caption")
+    except KeyError:
+        target.add_paragraph("图 X 第二张图")
+    target.add_paragraph("第六部分  研究团队")
+    target.add_paragraph("图9 范围外图片标题")
+    target.save(input_path)
+
+    extractor = DocxExtractor()
+    report = DocxCorrector().correct(
+        template_path,
+        input_path,
+        output_path,
+        extractor.extract(template_path),
+        extractor.extract(input_path),
+    )
+
+    corrected = Document(output_path)
+    assert corrected.paragraphs[1].text == "图 1 旧图片标题 English"
+    assert corrected.paragraphs[2].text == "表 1 国外从事相关研究的主要机构"
+    assert corrected.paragraphs[4].text == "图 2 第二张图"
+    assert corrected.paragraphs[6].text == "图9 范围外图片标题"
+    assert corrected.paragraphs[1].alignment == WD_ALIGN_PARAGRAPH.CENTER
+    assert corrected.paragraphs[2].alignment == WD_ALIGN_PARAGRAPH.CENTER
+    for paragraph in (corrected.paragraphs[1], corrected.paragraphs[2], corrected.paragraphs[4]):
+        for run in paragraph.runs:
+            if not run.text.strip():
+                continue
+            assert run.font.size.pt == 10.5
+            assert run._r.rPr.rFonts.get(qn("w:eastAsia")) == "宋体"
+            assert run._r.rPr.rFonts.get(qn("w:ascii")) == "Times New Roman"
+
+    with zipfile.ZipFile(output_path) as package:
+        document_xml = package.read("word/document.xml").decode("utf-8")
+        settings_xml = package.read("word/settings.xml").decode("utf-8")
+    assert "SEQ 图" in document_xml
+    assert "SEQ 表" in document_xml
+    assert "<w:updateFields" in settings_xml
+    assert "caption.normalized" in {action.code for action in report.actions}
+
+
 def test_corrector_normalizes_package_xml_highlight_shading_and_colors(tmp_path: Path) -> None:
     template_path = tmp_path / "template.docx"
     input_path = tmp_path / "input.docx"
@@ -323,3 +462,25 @@ def _shading(fill: str):
     shd = OxmlElement("w:shd")
     shd.set(qn("w:fill"), fill)
     return shd
+
+
+def _add_table_border(table, size: str) -> None:
+    borders = OxmlElement("w:tblBorders")
+    for tag in ("top", "left", "bottom", "right"):
+        border = OxmlElement(f"w:{tag}")
+        border.set(qn("w:val"), "single")
+        border.set(qn("w:sz"), size)
+        border.set(qn("w:color"), "auto")
+        borders.append(border)
+    table._tbl.tblPr.append(borders)
+
+
+def _add_cell_border(cell, size: str) -> None:
+    borders = OxmlElement("w:tcBorders")
+    for tag in ("top", "left", "bottom", "right"):
+        border = OxmlElement(f"w:{tag}")
+        border.set(qn("w:val"), "single")
+        border.set(qn("w:sz"), size)
+        border.set(qn("w:color"), "auto")
+        borders.append(border)
+    cell._tc.get_or_add_tcPr().append(borders)

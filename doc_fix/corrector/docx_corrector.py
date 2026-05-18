@@ -13,6 +13,7 @@ from typing import Iterable
 import zipfile
 
 from docx import Document
+from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from docx.shared import Pt
@@ -26,10 +27,20 @@ from doc_fix.model import CorrectionAction, CorrectionReport, DocumentSnapshot, 
 BRACKET_REMARK_PATTERN = re.compile(r"【[^】]*】")
 BLACK_COLOR = "000000"
 OOXML_WORD_NAMESPACE = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+XML_SPACE_ATTR = "{http://www.w3.org/XML/1998/namespace}space"
 TABLE_BODY_SECTION_PREFIXES = ("第一部分", "第二部分", "第三部分", "第四部分", "第五部分")
 TABLE_EAST_ASIA_FONT = "宋体"
 TABLE_LATIN_FONT = "Times New Roman"
 TABLE_FONT_SIZE_PT = 10.5
+TABLE_BORDER_SIZE = "4"
+CAPTION_PATTERN = re.compile(
+    r"^\s*(?P<label>[图表])"
+    r"(?:\s*(?P<number>[0-9０-９]+(?:[.．][0-9０-９]+)*|[一二三四五六七八九十百千万]+|[xXＸｘ]+)"
+    r"(?=\s|[、.．:：-]|$)|(?=\s|[、.．:：-]))"
+    r"\s*[、.．:：-]*\s*(?P<title>.*)$"
+)
+CAPTION_STYLE_NAMES = ("Caption", "题注")
+VISIBLE_BORDER_EXCLUSIONS = {"nil", "none"}
 DEFAULT_FORMAT_RULES = (
     FormatRule(scope="body"),
     FormatRule(scope="heading"),
@@ -67,9 +78,13 @@ class DocxCorrector:
             rules,
         )
         table_count, table_warnings = self._apply_table_text_formats(target_document, input_snapshot, rules)
+        border_count = self._thin_table_borders(target_document, input_snapshot)
+        image_count, image_warnings = self._center_images(target_document, input_snapshot)
+        caption_count = self._normalize_captions(target_document, input_snapshot)
         removed_count, removed_paragraphs = self._remove_bracket_remarks(target_document)
         warnings.extend(paragraph_warnings)
         warnings.extend(table_warnings)
+        warnings.extend(image_warnings)
 
         if paragraph_count:
             actions.append(
@@ -85,6 +100,30 @@ class DocxCorrector:
                     code="table.text_format_aligned",
                     message="已按模板对齐表格单元格文字格式。",
                     count=table_count,
+                )
+            )
+        if border_count:
+            actions.append(
+                CorrectionAction(
+                    code="table.border_thinned",
+                    message="已将第一至第五部分表格边框线宽统一为非加粗。",
+                    count=border_count,
+                )
+            )
+        if image_count:
+            actions.append(
+                CorrectionAction(
+                    code="image.centered",
+                    message="已将第一至第五部分图片段落居中并清除图片前空白。",
+                    count=image_count,
+                )
+            )
+        if caption_count:
+            actions.append(
+                CorrectionAction(
+                    code="caption.normalized",
+                    message="已将第一至第五部分已有图题/表题统一为 Word 题注。",
+                    count=caption_count,
                 )
             )
         if removed_count:
@@ -105,6 +144,8 @@ class DocxCorrector:
             )
 
         target_document.save(output_path)
+        if caption_count:
+            _enable_update_fields(output_path)
         color_count = _normalize_docx_package_black_white(output_path)
         if color_count:
             actions.append(
@@ -181,6 +222,58 @@ class DocxCorrector:
                         _apply_body_table_text_format(paragraph)
                         corrected += 1
         return corrected, []
+
+    def _thin_table_borders(self, target_document, input_snapshot: DocumentSnapshot) -> int:
+        corrected = 0
+        table_specs = {table.index: table for table in input_snapshot.tables}
+        for table_index, target_table in enumerate(target_document.tables):
+            table_spec = table_specs.get(table_index)
+            if table_spec is None or not _is_body_section_to_normalize(table_spec.chapter_path):
+                continue
+            if _thin_table_border_widths(target_table):
+                corrected += 1
+        return corrected
+
+    def _center_images(self, target_document, input_snapshot: DocumentSnapshot) -> tuple[int, list[str]]:
+        warnings: list[str] = []
+        paragraph_indexes: set[int] = set()
+        for image in input_snapshot.images:
+            if image.paragraph_index is None or not _is_body_section_to_normalize(image.chapter_path):
+                continue
+            paragraph_indexes.add(image.paragraph_index)
+            if image.wrap_type == "anchor":
+                warnings.append(f"image {image.index + 1}: 浮动图片已尝试居中，仍建议人工确认版式。")
+
+        corrected = 0
+        for paragraph_index in sorted(paragraph_indexes):
+            if paragraph_index >= len(target_document.paragraphs):
+                warnings.append(f"paragraph {paragraph_index + 1}: 未能定位图片段落，跳过图片居中。")
+                continue
+            paragraph = target_document.paragraphs[paragraph_index]
+            _strip_paragraph_leading_whitespace(paragraph)
+            paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            corrected += 1
+        return corrected, warnings
+
+    def _normalize_captions(self, target_document, input_snapshot: DocumentSnapshot) -> int:
+        counters = {"图": 0, "表": 0}
+        corrected = 0
+        for paragraph in input_snapshot.paragraphs:
+            if not _is_body_section_to_normalize(paragraph.chapter_path):
+                continue
+            match = _caption_match(paragraph.text, paragraph.style_name)
+            if match is None or paragraph.index >= len(target_document.paragraphs):
+                continue
+            label, title = match
+            counters[label] += 1
+            _rewrite_caption_paragraph(
+                target_document.paragraphs[paragraph.index],
+                label,
+                counters[label],
+                title,
+            )
+            corrected += 1
+        return corrected
 
     def _remove_bracket_remarks(self, document) -> tuple[int, int]:
         removed = 0
@@ -352,8 +445,39 @@ def _remove_bracket_remarks_from_paragraph(paragraph: Paragraph) -> int:
 
 
 def _is_body_table_to_normalize(chapter_path: str | None) -> bool:
+    return _is_body_section_to_normalize(chapter_path)
+
+
+def _is_body_section_to_normalize(chapter_path: str | None) -> bool:
     normalized = "".join((chapter_path or "").split())
     return normalized.startswith(TABLE_BODY_SECTION_PREFIXES)
+
+
+def _thin_table_border_widths(table) -> bool:
+    touched = False
+    tbl_pr = table._tbl.tblPr
+    if tbl_pr is not None:
+        for borders in tbl_pr.xpath("./w:tblBorders"):
+            touched = _thin_border_container(borders) or touched
+    for row in table.rows:
+        for cell in row.cells:
+            tc_pr = cell._tc.tcPr
+            if tc_pr is None:
+                continue
+            for borders in tc_pr.xpath("./w:tcBorders"):
+                touched = _thin_border_container(borders) or touched
+    return touched
+
+
+def _thin_border_container(borders) -> bool:
+    touched = False
+    for border in list(borders):
+        value = border.get(qn("w:val"))
+        if value in VISIBLE_BORDER_EXCLUSIONS:
+            continue
+        border.set(qn("w:sz"), TABLE_BORDER_SIZE)
+        touched = True
+    return touched
 
 
 def _apply_body_table_text_format(paragraph: Paragraph) -> None:
@@ -380,6 +504,102 @@ def _set_body_table_run_format(run: Run) -> None:
     r_pr.append(size_cs)
 
 
+def _caption_match(text: str | None, style_name: str | None) -> tuple[str, str] | None:
+    value = text or ""
+    match = CAPTION_PATTERN.match(value)
+    if match is None:
+        return None
+    label = match.group("label")
+    title = (match.group("title") or "").strip()
+    return label, title
+
+
+def _rewrite_caption_paragraph(paragraph: Paragraph, label: str, number: int, title: str) -> None:
+    _clear_paragraph_content(paragraph)
+    _set_caption_style(paragraph)
+    paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
+
+    _set_run_font_pair(paragraph.add_run(f"{label} "), TABLE_EAST_ASIA_FONT, TABLE_LATIN_FONT, TABLE_FONT_SIZE_PT)
+    _add_seq_field(paragraph, label, number)
+    if title:
+        _set_run_font_pair(paragraph.add_run(f" {title}"), TABLE_EAST_ASIA_FONT, TABLE_LATIN_FONT, TABLE_FONT_SIZE_PT)
+
+
+def _clear_paragraph_content(paragraph: Paragraph) -> None:
+    for child in list(paragraph._p):
+        if child.tag != qn("w:pPr"):
+            paragraph._p.remove(child)
+
+
+def _set_caption_style(paragraph: Paragraph) -> None:
+    for style_name in CAPTION_STYLE_NAMES:
+        try:
+            paragraph.style = style_name
+            return
+        except KeyError:
+            continue
+
+
+def _add_seq_field(paragraph: Paragraph, label: str, number: int) -> None:
+    begin_run = paragraph.add_run()
+    begin = OxmlElement("w:fldChar")
+    begin.set(qn("w:fldCharType"), "begin")
+    begin_run._r.append(begin)
+    _set_run_font_pair(begin_run, TABLE_EAST_ASIA_FONT, TABLE_LATIN_FONT, TABLE_FONT_SIZE_PT)
+
+    instr_run = paragraph.add_run()
+    instr = OxmlElement("w:instrText")
+    instr.set(XML_SPACE_ATTR, "preserve")
+    instr.text = f" SEQ {label} \\* ARABIC "
+    instr_run._r.append(instr)
+    _set_run_font_pair(instr_run, TABLE_EAST_ASIA_FONT, TABLE_LATIN_FONT, TABLE_FONT_SIZE_PT)
+
+    separate_run = paragraph.add_run()
+    separate = OxmlElement("w:fldChar")
+    separate.set(qn("w:fldCharType"), "separate")
+    separate_run._r.append(separate)
+    _set_run_font_pair(separate_run, TABLE_EAST_ASIA_FONT, TABLE_LATIN_FONT, TABLE_FONT_SIZE_PT)
+
+    _set_run_font_pair(paragraph.add_run(str(number)), TABLE_EAST_ASIA_FONT, TABLE_LATIN_FONT, TABLE_FONT_SIZE_PT)
+
+    end_run = paragraph.add_run()
+    end = OxmlElement("w:fldChar")
+    end.set(qn("w:fldCharType"), "end")
+    end_run._r.append(end)
+    _set_run_font_pair(end_run, TABLE_EAST_ASIA_FONT, TABLE_LATIN_FONT, TABLE_FONT_SIZE_PT)
+
+
+def _strip_paragraph_leading_whitespace(paragraph: Paragraph) -> None:
+    stripping = True
+    for text_node in paragraph._p.xpath(".//w:t"):
+        if not stripping:
+            return
+        value = text_node.text or ""
+        stripped = value.lstrip()
+        text_node.text = stripped
+        if stripped:
+            return
+
+
+def _set_run_font_pair(run: Run, east_asia_font: str, latin_font: str, font_size_pt: float) -> None:
+    r_pr = run._r.get_or_add_rPr()
+    _remove_run_property(r_pr, "rFonts")
+    _remove_run_property(r_pr, "sz")
+    _remove_run_property(r_pr, "szCs")
+
+    r_fonts = OxmlElement("w:rFonts")
+    r_fonts.set(qn("w:ascii"), latin_font)
+    r_fonts.set(qn("w:hAnsi"), latin_font)
+    r_fonts.set(qn("w:cs"), latin_font)
+    r_fonts.set(qn("w:eastAsia"), east_asia_font)
+    r_pr.append(r_fonts)
+
+    run.font.size = Pt(font_size_pt)
+    size_cs = OxmlElement("w:szCs")
+    size_cs.set(qn("w:val"), str(int(font_size_pt * 2)))
+    r_pr.append(size_cs)
+
+
 def _remove_run_property(r_pr, tag: str) -> None:
     for child in list(r_pr):
         if child.tag == qn(f"w:{tag}"):
@@ -398,6 +618,42 @@ def _normalize_docx_package_black_white(path: Path) -> int:
             target.writestr(item, data)
     temp_path.replace(path)
     return changed
+
+
+def _enable_update_fields(path: Path) -> None:
+    temp_path = path.with_suffix(".tmp.docx")
+    settings_seen = False
+    with zipfile.ZipFile(path, "r") as source, zipfile.ZipFile(temp_path, "w", compression=zipfile.ZIP_DEFLATED) as target:
+        for item in source.infolist():
+            data = source.read(item.filename)
+            if item.filename == "word/settings.xml":
+                data = _enable_update_fields_xml(data)
+                settings_seen = True
+            target.writestr(item, data)
+        if not settings_seen:
+            settings = etree.Element(f"{{{OOXML_WORD_NAMESPACE}}}settings", nsmap={"w": OOXML_WORD_NAMESPACE})
+            update_fields = etree.SubElement(settings, f"{{{OOXML_WORD_NAMESPACE}}}updateFields")
+            update_fields.set(qn("w:val"), "true")
+            target.writestr(
+                "word/settings.xml",
+                etree.tostring(settings, encoding="UTF-8", xml_declaration=True),
+            )
+    temp_path.replace(path)
+
+
+def _enable_update_fields_xml(data: bytes) -> bytes:
+    parser = etree.XMLParser(remove_blank_text=False, resolve_entities=False)
+    root = etree.fromstring(data, parser)
+    update_tag = f"{{{OOXML_WORD_NAMESPACE}}}updateFields"
+    nodes = root.findall(update_tag)
+    if nodes:
+        update_fields = nodes[0]
+    else:
+        update_fields = etree.Element(update_tag)
+        root.insert(0, update_fields)
+    update_fields.set(qn("w:val"), "true")
+    xml_declaration = data.startswith(b"<?xml")
+    return etree.tostring(root, encoding="UTF-8", xml_declaration=xml_declaration, standalone=None)
 
 
 def _should_normalize_word_xml(filename: str) -> bool:
