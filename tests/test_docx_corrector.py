@@ -1,7 +1,10 @@
 from pathlib import Path
+import zipfile
 
 from docx import Document
 from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_COLOR_INDEX
+from docx.oxml import OxmlElement
+from docx.oxml.ns import qn
 from docx.shared import Pt, RGBColor
 
 from doc_fix.corrector import DocxCorrector
@@ -61,9 +64,10 @@ def test_corrector_copies_paragraph_format_and_removes_bracket_remarks(tmp_path:
     assert corrected_paragraph.paragraph_format.space_before.pt == 6
     assert corrected_paragraph.paragraph_format.space_after.pt == 12
     assert corrected_run.font.size.pt == 14
-    assert corrected_run.font.color.rgb == RGBColor(0x11, 0x22, 0x33)
-    assert corrected_run.font.highlight_color == WD_COLOR_INDEX.YELLOW
+    assert corrected_run.font.color.rgb == RGBColor(0, 0, 0)
+    assert corrected_run.font.highlight_color is None
     assert {action.code for action in report.actions} == {
+        "format.color_normalized",
         "paragraph.format_aligned",
         "remarks.bracket_removed",
     }
@@ -133,10 +137,56 @@ def test_corrector_copies_table_text_format_and_keeps_empty_table_paragraph(tmp_
     assert paragraph.text == "目标"
     assert paragraph.alignment == WD_ALIGN_PARAGRAPH.CENTER
     assert paragraph.runs[0].font.size.pt == 12
-    assert {action.code for action in report.actions} == {
-        "table.text_format_aligned",
-        "remarks.bracket_removed",
-    }
+    assert {"table.text_format_aligned", "remarks.bracket_removed", "format.color_normalized"}.issubset(
+        {action.code for action in report.actions}
+    )
+
+
+def test_corrector_normalizes_package_xml_highlight_shading_and_colors(tmp_path: Path) -> None:
+    template_path = tmp_path / "template.docx"
+    input_path = tmp_path / "input.docx"
+    output_path = tmp_path / "input.corrected.docx"
+
+    template = Document()
+    template.add_paragraph().add_run("模板正文").font.size = Pt(12)
+    template.save(template_path)
+
+    target = Document()
+    paragraph = target.add_paragraph("带编号底纹的正文")
+    paragraph.runs[0].font.color.rgb = RGBColor(0xFF, 0, 0)
+    paragraph.runs[0].font.highlight_color = WD_COLOR_INDEX.YELLOW
+    p_pr = paragraph._p.get_or_add_pPr()
+    r_pr = OxmlElement("w:rPr")
+    highlight = OxmlElement("w:highlight")
+    highlight.set(qn("w:val"), "lightGray")
+    color = OxmlElement("w:color")
+    color.set(qn("w:val"), "00B050")
+    r_pr.append(highlight)
+    r_pr.append(color)
+    r_pr.append(_shading("D9D9D9"))
+    p_pr.append(r_pr)
+    table = target.add_table(rows=1, cols=1)
+    table.cell(0, 0).text = "表格"
+    table.cell(0, 0)._tc.get_or_add_tcPr().append(_shading("FFFF00"))
+    target.save(input_path)
+
+    extractor = DocxExtractor()
+    report = DocxCorrector().correct(
+        template_path,
+        input_path,
+        output_path,
+        extractor.extract(template_path),
+        extractor.extract(input_path),
+    )
+
+    with zipfile.ZipFile(output_path) as package:
+        document_xml = package.read("word/document.xml").decode("utf-8")
+    assert "<w:highlight" not in document_xml
+    assert "<w:shd" not in document_xml
+    assert 'w:val="FF0000"' not in document_xml
+    assert 'w:val="00B050"' not in document_xml
+    assert 'w:val="000000"' in document_xml
+    assert "format.color_normalized" in {action.code for action in report.actions}
 
 
 def test_corrector_body_fallback_uses_common_body_format_not_cover(tmp_path: Path) -> None:
@@ -207,3 +257,9 @@ def test_corrector_no_chapter_paragraphs_match_by_text_before_fallback(tmp_path:
     corrected = Document(output_path)
     assert corrected.paragraphs[0].runs[0].font.size.pt == 22
     assert corrected.paragraphs[1].runs[0].font.size.pt == 16
+
+
+def _shading(fill: str):
+    shd = OxmlElement("w:shd")
+    shd.set(qn("w:fill"), fill)
+    return shd

@@ -10,16 +10,20 @@ from pathlib import Path
 import re
 import shutil
 from typing import Iterable
+import zipfile
 
 from docx import Document
 from docx.oxml.ns import qn
 from docx.text.paragraph import Paragraph
 from docx.text.run import Run
+from lxml import etree
 
 from doc_fix.model import CorrectionAction, CorrectionReport, DocumentSnapshot, FormatRule, ParagraphBlock
 
 
 BRACKET_REMARK_PATTERN = re.compile(r"【[^】]*】")
+BLACK_COLOR = "000000"
+OOXML_WORD_NAMESPACE = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 DEFAULT_FORMAT_RULES = (
     FormatRule(scope="body"),
     FormatRule(scope="heading"),
@@ -99,6 +103,15 @@ class DocxCorrector:
             )
 
         target_document.save(output_path)
+        color_count = _normalize_docx_package_black_white(output_path)
+        if color_count:
+            actions.append(
+                CorrectionAction(
+                    code="format.color_normalized",
+                    message="已将文字和底纹统一为白底黑字。",
+                    count=color_count,
+                )
+            )
         return CorrectionReport(
             template_path=template_snapshot.source_path,
             input_path=input_snapshot.source_path,
@@ -334,6 +347,88 @@ def _remove_bracket_remarks_from_paragraph(paragraph: Paragraph) -> int:
         node.text = "".join(char for char, should_keep in zip(value, keep[offset : offset + length], strict=True) if should_keep)
         offset += length
     return len(matches)
+
+
+def _normalize_docx_package_black_white(path: Path) -> int:
+    changed = 0
+    temp_path = path.with_suffix(".tmp.docx")
+    with zipfile.ZipFile(path, "r") as source, zipfile.ZipFile(temp_path, "w", compression=zipfile.ZIP_DEFLATED) as target:
+        for item in source.infolist():
+            data = source.read(item.filename)
+            if _should_normalize_word_xml(item.filename):
+                data, item_changes = _normalize_word_xml_black_white(data, item.filename)
+                changed += item_changes
+            target.writestr(item, data)
+    temp_path.replace(path)
+    return changed
+
+
+def _should_normalize_word_xml(filename: str) -> bool:
+    if filename in {"word/document.xml", "word/styles.xml", "word/numbering.xml"}:
+        return True
+    return bool(re.match(r"word/(header|footer)\d+\.xml$", filename))
+
+
+def _normalize_word_xml_black_white(data: bytes, filename: str) -> tuple[bytes, int]:
+    parser = etree.XMLParser(remove_blank_text=False, resolve_entities=False)
+    root = etree.fromstring(data, parser)
+    namespace = {"w": OOXML_WORD_NAMESPACE}
+    changed = 0
+
+    for node in list(root.xpath(".//w:highlight | .//w:shd", namespaces=namespace)):
+        parent = node.getparent()
+        if parent is not None:
+            parent.remove(node)
+            changed += 1
+
+    if _is_document_part(filename):
+        for run in root.xpath(".//w:r", namespaces=namespace):
+            changed += _normalize_xml_rpr_color(_get_or_add_xml_child(run, "rPr", first=True))
+        for paragraph in root.xpath(".//w:p", namespaces=namespace):
+            p_pr = _get_or_add_xml_child(paragraph, "pPr", first=True)
+            changed += _normalize_xml_rpr_color(_get_or_add_xml_child(p_pr, "rPr", first=False))
+    else:
+        for r_pr in root.xpath(".//w:rPr", namespaces=namespace):
+            changed += _normalize_xml_rpr_color(r_pr)
+
+    xml_declaration = data.startswith(b"<?xml")
+    return etree.tostring(root, encoding="UTF-8", xml_declaration=xml_declaration, standalone=None), changed
+
+
+def _is_document_part(filename: str) -> bool:
+    return filename == "word/document.xml" or bool(re.match(r"word/(header|footer)\d+\.xml$", filename))
+
+
+def _get_or_add_xml_child(parent, tag: str, first: bool):
+    child_tag = f"{{{OOXML_WORD_NAMESPACE}}}{tag}"
+    children = parent.findall(child_tag)
+    if children:
+        return children[0]
+    child = etree.Element(child_tag)
+    if first:
+        parent.insert(0, child)
+    else:
+        parent.append(child)
+    return child
+
+
+def _normalize_xml_rpr_color(r_pr) -> int:
+    changed = 0
+    color_tag = f"{{{OOXML_WORD_NAMESPACE}}}color"
+    color_nodes = r_pr.findall(color_tag)
+    if not color_nodes:
+        color_nodes = [etree.SubElement(r_pr, color_tag)]
+        changed += 1
+    for node in color_nodes:
+        if node.get(qn("w:val")) != BLACK_COLOR:
+            changed += 1
+        node.set(qn("w:val"), BLACK_COLOR)
+        for attr in ("themeColor", "themeTint", "themeShade"):
+            qualified = qn(f"w:{attr}")
+            if qualified in node.attrib:
+                del node.attrib[qualified]
+                changed += 1
+    return changed
 
 
 def _delete_paragraph(paragraph: Paragraph) -> None:
