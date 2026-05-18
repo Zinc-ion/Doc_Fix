@@ -58,3 +58,31 @@ class AiReviewFinding:
     locator: str | None = None
     evidence: str | None = None
     suggested_action: str | None = None
+
+
+@dataclass(frozen=True)
+class CorrectionAction:
+    """One correction applied to a generated copy."""
+
+    code: str
+    message: str
+    count: int = 0
+    paragraph_index: int | None = None
+    table_index: int | None = None
+
+
+@dataclass(frozen=True)
+class CorrectionReport:
+    """Full automatic correction report."""
+
+    template_path: str
+    input_path: str
+    template_docx_path: str
+    input_docx_path: str
+    corrected_docx_path: str
+    corrected_doc_path: str | None = None
+    corrected_doc_export_error: str | None = None
+    corrected_check_report_path: str | None = None
+    corrected_doc_check_report_path: str | None = None
+    actions: tuple[CorrectionAction, ...] = field(default_factory=tuple)
+    warnings: tuple[str, ...] = field(default_factory=tuple)

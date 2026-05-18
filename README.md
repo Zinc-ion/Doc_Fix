@@ -12,6 +12,7 @@ Doc_Fix 面向实际申报材料中常见的 `.doc` 文件。v1 会先将模板�
 - **表格检查**：检查表格数量、列数、宽度、边框、字体、对齐、行高和是否超页宽。
 - **图片检查**：检查图片数量、所在板块、宽高、对齐、环绕方式和是否超页宽。
 - **报告输出**：输出终端摘要、JSON 详情、按目录章节分组的 Markdown/HTML 人工核对报告。
+- **自动修正**：可输出 `.docx` 修正版，删除 `【】` 备注并按模板对齐段落/表格文字格式。
 - **AI 辅助**：可选调用 DeepSeek 生成摘要、人工处理建议和收尾复核项。
 
 ## 技术栈
@@ -57,6 +58,7 @@ Python 3.10+ / Microsoft Word or Word Converter / python-docx / lxml / click / r
 | `doc_fix.converter` | 使用 Microsoft Word COM 将 `.doc` 标准化为 `.docx` 工作副本 |
 | `doc_fix.extractor` | 使用 `python-docx` 和底层 OOXML 提取段落、标题、表格、图片和字数规则 |
 | `doc_fix.checker` | 执行字数、表格、图片刚性检查，生成结构化 issue |
+| `doc_fix.corrector` | 基于模板格式生成目标文档修正版，不修改原始输入 |
 | `doc_fix.reporter` | 生成 JSON、Markdown、HTML 和终端摘要 |
 | `doc_fix.ai` | 可选调用 DeepSeek 生成报告摘要、人工处理建议和收尾复核项 |
 | `doc_fix.cli` | 使用 `click` 编排命令行流程 |
@@ -160,9 +162,31 @@ pip install -e .
 doc-fix check --template template.doc --input target.doc --out-dir output
 ```
 
+生成自动修正版：
+
+```powershell
+python -m doc_fix.cli.main correct --template template.doc --input target.doc --out-dir output
+```
+
+`correct` 会默认生成：
+
+- `input.converted.docx`
+- `input.corrected.docx`
+- `input.corrected.doc`（若本机 Word 导出成功）
+- `correction_report.json`
+- `corrected_check_report.json`
+- `corrected_doc_check_report.json`（若 `.doc` 导出和回转检查成功）
+
+首版自动修正范围：
+
+- 删除正文和表格单元格中所有成对 `【...】` 内容，包括短标签。
+- 将正文/标题段落的字体、字号、字体颜色、字体背景/高亮、对齐、缩进、行距、段前段后对齐到模板。
+- 将表格单元格内文字格式对齐到模板对应表格/单元格，找不到精确单元格时使用模板表格中的首个非空单元格作为兜底。
+- 不自动调整图片、表格宽度、表格结构、页眉页脚、编号和页面设置。
+
 ## 重要说明
 
-`.doc` 是老二进制格式，`python-docx` 不能直接读取。Doc_Fix v1 采用“`.doc` 转 `.docx` 工作副本后检查”的方案。后续如果需要将 `.docx` 再导出为 `.doc`，可以通过 Microsoft Word 实现，但不能保证 100% 无损，必须导出后再次检查刚性规则。
+`.doc` 是老二进制格式，`python-docx` 不能直接读取。Doc_Fix v1 采用“`.doc` 转 `.docx` 工作副本后检查/修正”的方案。自动修正永远只写入 `--out-dir` 下的工作副本和修正版，不覆盖原始输入。若需要将 `.docx` 再导出为 `.doc`，可以通过 Microsoft Word 实现，但不能保证 100% 无损，必须导出后再次检查刚性规则。
 
 ## 项目状态
 

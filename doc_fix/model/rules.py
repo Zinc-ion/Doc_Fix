@@ -33,6 +33,8 @@ class FormatRule:
     enabled: bool = True
     check_font_names: bool = True
     check_font_sizes: bool = True
+    check_font_colors: bool = True
+    check_font_highlights: bool = True
     check_alignment: bool = True
     check_indent: bool = True
     check_line_spacing: bool = True

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections import Counter
 from dataclasses import dataclass
 
 from doc_fix.checker.word_count import count_mixed_words, strip_rule_hint
@@ -375,6 +376,7 @@ class DocumentChecker:
         rules: dict[str, FormatRule],
     ) -> dict[tuple[str, int | None, str | None], ParagraphBlock]:
         references: dict[tuple[str, int | None, str | None], ParagraphBlock] = {}
+        fallback_candidates: dict[tuple[str, int | None], list[ParagraphBlock]] = {}
         for paragraph in template.paragraphs:
             scope = self._paragraph_scope(paragraph)
             if scope is None:
@@ -384,8 +386,11 @@ class DocumentChecker:
                 continue
             exact_key = self._paragraph_format_key(paragraph)
             references.setdefault(exact_key, paragraph)
-            fallback_key = (exact_key[0], exact_key[1], None)
-            references.setdefault(fallback_key, paragraph)
+            fallback_candidates.setdefault((exact_key[0], exact_key[1]), []).append(paragraph)
+        for (scope, heading_level), candidates in fallback_candidates.items():
+            representative = most_common_paragraph_format(candidates)
+            if representative is not None:
+                references[(scope, heading_level, None)] = representative
         return references
 
     def _has_scope_reference(
@@ -401,12 +406,20 @@ class DocumentChecker:
         references: dict[tuple[str, int | None, str | None], ParagraphBlock],
     ) -> ParagraphBlock | None:
         exact_key = self._paragraph_format_key(paragraph)
-        return references.get(exact_key) or references.get((exact_key[0], exact_key[1], None))
+        exact_reference = references.get(exact_key)
+        if exact_reference is not None:
+            return exact_reference
+        if paragraph.chapter_path is None:
+            return None
+        return references.get((exact_key[0], exact_key[1], None))
 
     def _paragraph_format_key(self, paragraph: ParagraphBlock) -> tuple[str, int | None, str | None]:
         scope = self._paragraph_scope(paragraph) or "body"
         heading_level = paragraph.heading_level if scope == "heading" else None
-        return (scope, heading_level, normalize_chapter_path_key(paragraph.chapter_path))
+        chapter_key = normalize_chapter_path_key(paragraph.chapter_path)
+        if chapter_key is None:
+            chapter_key = normalize_paragraph_text_key(paragraph.text)
+        return (scope, heading_level, chapter_key)
 
     def _paragraph_scope(self, paragraph: ParagraphBlock) -> str | None:
         if not paragraph.text:
@@ -773,6 +786,37 @@ def normalize_chapter_path_key(chapter_path: str | None) -> str | None:
     if not chapter_path:
         return None
     return "".join(chapter_path.split())
+
+
+def normalize_paragraph_text_key(text: str | None) -> str | None:
+    if not text:
+        return None
+    return "text:" + "".join(text.split())
+
+
+def most_common_paragraph_format(paragraphs: list[ParagraphBlock]) -> ParagraphBlock | None:
+    if not paragraphs:
+        return None
+    signatures = Counter(paragraph_format_signature(paragraph) for paragraph in paragraphs)
+    signature, _ = signatures.most_common(1)[0]
+    for paragraph in paragraphs:
+        if paragraph_format_signature(paragraph) == signature:
+            return paragraph
+    return None
+
+
+def paragraph_format_signature(paragraph: ParagraphBlock) -> tuple:
+    return (
+        paragraph.font_names,
+        paragraph.font_sizes_pt,
+        paragraph.alignment,
+        paragraph.first_line_indent_twips,
+        paragraph.left_indent_twips,
+        paragraph.right_indent_twips,
+        paragraph.line_spacing,
+        paragraph.space_before_twips,
+        paragraph.space_after_twips,
+    )
 
 
 def same_float_set(expected: tuple[float, ...], actual: tuple[float, ...], tolerance: float) -> bool:

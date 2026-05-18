@@ -91,6 +91,8 @@ def _parse_format_rules(rules: Any) -> tuple[FormatRule, ...]:
                 enabled=bool(raw_rule.get("enabled", True)),
                 check_font_names=bool(raw_rule.get("check_font_names", True)),
                 check_font_sizes=bool(raw_rule.get("check_font_sizes", True)),
+                check_font_colors=bool(raw_rule.get("check_font_colors", True)),
+                check_font_highlights=bool(raw_rule.get("check_font_highlights", True)),
                 check_alignment=bool(raw_rule.get("check_alignment", True)),
                 check_indent=bool(raw_rule.get("check_indent", True)),
                 check_line_spacing=bool(raw_rule.get("check_line_spacing", True)),
