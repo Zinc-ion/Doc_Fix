@@ -16,7 +16,7 @@ Doc_Fix 面向实际申报材料中常见的 `.doc` 文件。v1 会先将模板�
 
 ## 技术栈
 
-Python 3.10+ / Microsoft Word or Word Converter / python-docx / lxml / click / rich / openai / python-dotenv / pytest
+Python 3.10+ / LibreOffice (Linux) or Microsoft Word (Windows) / python-docx / lxml / click / rich / openai / python-dotenv / pytest
 
 ## 运行逻辑
 
@@ -54,7 +54,7 @@ Python 3.10+ / Microsoft Word or Word Converter / python-docx / lxml / click / r
 
 | 模块 | 职责 |
 |------|------|
-| `doc_fix.converter` | 使用 Microsoft Word COM 将 `.doc` 标准化为 `.docx` 工作副本 |
+| `doc_fix.converter` | 使用 LibreOffice (Linux) / Microsoft Word COM (Windows) 将 `.doc` 标准化为 `.docx` 工作副本 |
 | `doc_fix.extractor` | 使用 `python-docx` 和底层 OOXML 提取段落、标题、表格、图片和字数规则 |
 | `doc_fix.checker` | 执行字数、表格、图片刚性检查，生成结构化 issue |
 | `doc_fix.reporter` | 生成 JSON、Markdown、HTML 和终端摘要 |
@@ -84,17 +84,28 @@ Python 3.10+ / Microsoft Word or Word Converter / python-docx / lxml / click / r
 
 如果模板和目标不是同一类文档，程序会尽量给出章节定位，但表格匹配可能退回到“按全局序号兜底匹配”。这类提示表示结果需要人工复核。
 
+## 开发环境
+
+当前 Linux 版本在 `linux_ver` 分支开发，使用 `doc-fix` 虚拟环境：
+
+```bash
+python3 -m venv doc-fix
+source doc-fix/bin/activate
+pip install -r requirements.txt
+pip install -e .
+```
+
 ## 快速开始
 
 安装依赖：
 
-```powershell
+```bash
 pip install -r requirements.txt
 ```
 
 运行检查：
 
-```powershell
+```bash
 python -m doc_fix.cli.main check --template template.doc --input target.doc --out-dir output
 ```
 
@@ -108,13 +119,13 @@ python -m doc_fix.cli.main check --template template.doc --input target.doc --ou
 
 如果需要覆盖某个报告路径，可以单独指定：
 
-```powershell
+```bash
 python -m doc_fix.cli.main check --template template.doc --input target.doc --out-dir output --html review.html
 ```
 
 使用 JSON 配置覆盖模板自动识别的字数规则：
 
-```powershell
+```bash
 python -m doc_fix.cli.main check --template template.doc --input target.doc --config rules.json --out-dir output
 ```
 
@@ -139,7 +150,7 @@ python -m doc_fix.cli.main check --template template.doc --input target.doc --co
 
 启用 DeepSeek 辅助摘要和处理建议：
 
-```powershell
+```bash
 python -m doc_fix.cli.main check --template template.doc --input target.doc --out-dir output --ai
 ```
 
@@ -147,7 +158,7 @@ python -m doc_fix.cli.main check --template template.doc --input target.doc --ou
 
 如果希望使用 `doc-fix` 命令，可在虚拟环境中以可编辑模式安装：
 
-```powershell
+```bash
 pip install -e .
 doc-fix check --template template.doc --input target.doc --out-dir output
 ```
@@ -158,7 +169,7 @@ doc-fix check --template template.doc --input target.doc --out-dir output
 
 ## 项目状态
 
-当前处于 Phase 1 — `.doc` 转换适配层与 v1 原型阶段。详见 [progress.md](./progress.md)。
+当前处于 Phase 1 — Linux 版本适配开发阶段，在 `linux_ver` 分支进行。详见 [progress.md](./progress.md)。
 
 ## 协作规则
 

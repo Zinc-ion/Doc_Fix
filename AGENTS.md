@@ -31,7 +31,7 @@ Doc_Fix 是一个面向 WPS/Word 申报书、标书文档的格式检查工具�
 | 用途 | 技术 |
 |------|------|
 | 语言 | Python 3.10+ |
-| `.doc` 转换 | Windows 本机 Microsoft Word / Word Converter |
+| `.doc` 转换 | Linux: LibreOffice；Windows: Microsoft Word / Word Converter |
 | `.docx` 文档读写 | `python-docx` |
 | 底层 OOXML 访问 | `lxml` |
 | CLI 框架 | `click` |
@@ -42,7 +42,7 @@ Doc_Fix 是一个面向 WPS/Word 申报书、标书文档的格式检查工具�
 
 ### 技术约束
 
-- `.doc` 是老二进制格式，`python-docx` 不能直接读取，必须先通过转换适配层生成 `.docx` 工作副本。
+- `.doc` 是老二进制格式，`python-docx` 不能直接读取，必须先通过转换适配层 (Linux: LibreOffice, Windows: Word COM) 生成 `.docx` 工作副本。
 - 原始 `.doc` 文件只读处理，不得覆盖或静默修改。
 - 转换后的 `.docx` 副本必须保留，便于人工复核和后续问题定位。
 - 检查模块只消费标准化后的 `.docx`，不得在业务检查逻辑中混入 Word COM 调用。
@@ -118,11 +118,21 @@ cli -> converter/extractor/checker/reporter -> model
 
 ## 9. 开发工作流
 
-- `main` 为稳定分支，只通过 PR 合并。
+- `main` 为 Windows 版稳定分支，只通过 PR 合并。
+- `linux_ver` 为 Linux 适配开发分支，使用 `doc-fix` 虚拟环境进行开发。
 - 功能分支命名：`feat/<功能简述>`。
 - 修复分支命名：`fix/<问题简述>`。
 - 提交信息格式：`<type>: <简短描述>`，如 `feat: add doc converter`。
 - PR 描述需说明变更动机、影响范围和测试结果。
+
+### Linux 开发环境
+
+```bash
+python3 -m venv doc-fix
+source doc-fix/bin/activate
+pip install -r requirements.txt
+pip install -e .
+```
 
 ## 10. 文档维护
 
