@@ -259,3 +259,12 @@ Word 图表、Excel 嵌入对象、复杂 OLE 对象暂不作为 v1 强制检查
 | 2026-05-18 | 新增 `doc-fix correct` 自动修正原型 | 项目从检测阶段进入自动修改阶段，先覆盖备注删除和段落/表格文字格式对齐 |
 | 2026-05-18 | 调整第一至第五部分表格文字自动修正策略 | 这些章节内表格不再参考模板，统一为宋体/Times New Roman 五号，范围外表格保持原样 |
 | 2026-05-19 | 新增第一至第五部分表格边框、图片居中和已有图表题注修正 | 进一步减少正文主体中图表排版的人工整理成本，同时避免自动新增缺失标题 |
+| 2026-05-19 | 新增临时 Linux Web 修改入口设计与实现 | 供阿里云临时部署上传申报书、固定模板自动修正并下载结果；Linux 通过 LibreOffice headless 转换，需接受与 Word/WPS 的排版差异风险 |
+
+## 临时 Linux Web 部署说明
+
+- 新增 `python -m doc_fix.web.server` 临时 Web 入口，默认监听 `0.0.0.0:8000`，固定使用 `example/项目申报-模板.doc`，上传文件只允许 `.doc/.docx`。
+- 服务器端默认写入 `output/web/<job_id>/`，保留上传副本、转换副本、`input.corrected.docx`、可选 `input.corrected.doc` 和 JSON 报告；默认保留 24 小时。
+- Linux 部署依赖 LibreOffice headless，默认命令为 `soffice`，可通过 `DOC_FIX_LIBREOFFICE_BIN` 覆盖；每个任务使用独立 LibreOffice profile 降低并发转换冲突。
+- `.doc` 下载优先使用 LibreOffice 从修正后的 `.docx` 导出；若导出失败，页面提供 `.docx` 下载并显示导出错误。
+- LibreOffice 与 Microsoft Word/WPS 的 `.doc` 转换和回转结果可能存在排版差异，临时 Web 入口不承诺 `.doc` 回转绝对保真，仍需以下载文件和报告进行人工复核。

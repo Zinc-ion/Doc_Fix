@@ -67,13 +67,17 @@ class WordConverter:
         input_path = input_path.resolve()
         output_path = output_path.resolve()
         try:
+            import pythoncom  # type: ignore[import-not-found]
             import win32com.client  # type: ignore[import-not-found]
         except ImportError as exc:
             raise ConversionError("pywin32 is required for Word .doc conversion on Windows.") from exc
 
+        com_initialized = False
         word = None
         document = None
         try:
+            pythoncom.CoInitialize()
+            com_initialized = True
             word = win32com.client.DispatchEx("Word.Application")
             word.Visible = False
             word.DisplayAlerts = 0
@@ -86,3 +90,5 @@ class WordConverter:
                 document.Close(False)
             if word is not None:
                 word.Quit()
+            if com_initialized:
+                pythoncom.CoUninitialize()
